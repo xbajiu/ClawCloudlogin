@@ -1,0 +1,159 @@
+name: ClawCloud 自动登录保活
+
+on:
+  schedule:
+    - cron: '0 7 */5 * *'  # UTC 7:00，每5天运行
+  workflow_dispatch:
+
+jobs:
+  # === JOB 1: 智能检测账号数量 ===
+  check_accounts:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        env:
+          # 账号 1 (基础无后缀)
+          U1: ${{ secrets.GH_USERNAME }}
+          # 账号 2-6 (带后缀)
+          U2: ${{ secrets.GH_USERNAME_2 }}
+          U3: ${{ secrets.GH_USERNAME_3 }}
+          U4: ${{ secrets.GH_USERNAME_4 }}
+          U5: ${{ secrets.GH_USERNAME_5 }}
+          U6: ${{ secrets.GH_USERNAME_6 }}
+        run: |
+          echo "🔍 正在智能检测已配置的账号..."
+          ids="[]"
+          
+          # === 修复点：添加 -c 参数强制输出单行 JSON ===
+          
+          if [ -n "$U1" ]; then
+            ids=$(echo $ids | jq -c '. + [1]')
+            echo "✅ 发现账号 1"
+          fi
+          
+          if [ -n "$U2" ]; then
+            ids=$(echo $ids | jq -c '. + [2]')
+            echo "✅ 发现账号 2"
+          fi
+          
+          if [ -n "$U3" ]; then
+            ids=$(echo $ids | jq -c '. + [3]')
+            echo "✅ 发现账号 3"
+          fi
+          
+          if [ -n "$U4" ]; then
+            ids=$(echo $ids | jq -c '. + [4]')
+            echo "✅ 发现账号 4"
+          fi
+          
+          if [ -n "$U5" ]; then
+            ids=$(echo $ids | jq -c '. + [5]')
+            echo "✅ 发现账号 5"
+          fi
+          
+          if [ -n "$U6" ]; then
+            ids=$(echo $ids | jq -c '. + [6]')
+            echo "✅ 发现账号 6"
+          fi
+
+          # 输出最终矩阵
+          echo "📊 最终运行矩阵: $ids"
+          echo "matrix=$ids" >> $GITHUB_OUTPUT
+
+  # === JOB 2: 并行执行登录任务 ===
+  auto-login:
+    needs: check_accounts
+    if: ${{ needs.check_accounts.outputs.matrix != '[]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        account_id: ${{ fromJson(needs.check_accounts.outputs.matrix) }}
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装依赖
+        run: |
+          pip install playwright requests pynacl
+          playwright install chromium
+          playwright install-deps
+
+      - name: 运行自动登录 (账号 ${{ matrix.account_id }})
+        env:
+          # === 1. 导入所有动态变量 ===
+          # 账号 1
+          GH_USERNAME_1: ${{ secrets.GH_USERNAME }}
+          GH_PASSWORD_1: ${{ secrets.GH_PASSWORD }}
+          GH_SESSION_1: ${{ secrets.GH_SESSION }}
+          
+          # 账号 2
+          GH_USERNAME_2: ${{ secrets.GH_USERNAME_2 }}
+          GH_PASSWORD_2: ${{ secrets.GH_PASSWORD_2 }}
+          GH_SESSION_2: ${{ secrets.GH_SESSION_2 }}
+          
+          # 账号 3
+          GH_USERNAME_3: ${{ secrets.GH_USERNAME_3 }}
+          GH_PASSWORD_3: ${{ secrets.GH_PASSWORD_3 }}
+          GH_SESSION_3: ${{ secrets.GH_SESSION_3 }}
+          
+          # 账号 4
+          GH_USERNAME_4: ${{ secrets.GH_USERNAME_4 }}
+          GH_PASSWORD_4: ${{ secrets.GH_PASSWORD_4 }}
+          GH_SESSION_4: ${{ secrets.GH_SESSION_4 }}
+          
+          # 账号 5
+          GH_USERNAME_5: ${{ secrets.GH_USERNAME_5 }}
+          GH_PASSWORD_5: ${{ secrets.GH_PASSWORD_5 }}
+          GH_SESSION_5: ${{ secrets.GH_SESSION_5 }}
+
+          # 账号 6
+          GH_USERNAME_6: ${{ secrets.GH_USERNAME_6 }}
+          GH_PASSWORD_6: ${{ secrets.GH_PASSWORD_6 }}
+          GH_SESSION_6: ${{ secrets.GH_SESSION_6 }}
+          
+          # === 2. 导入通用变量 ===
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          REPO_TOKEN: ${{ secrets.REPO_TOKEN }}
+          
+        run: |
+          ID="${{ matrix.account_id }}"
+          echo "🚀 正在启动账号 $ID 的任务..."
+
+          # === 核心逻辑：根据 ID 自动抓取对应的变量 ===
+          
+          if [ "$ID" == "1" ]; then
+            # 账号 1 特殊处理（无后缀）
+            export GH_USERNAME="$GH_USERNAME_1"
+            export GH_PASSWORD="$GH_PASSWORD_1"
+            export GH_SESSION="$GH_SESSION_1"
+            export SESSION_SECRET_KEY="GH_SESSION"
+          else
+            # 账号 2+ 使用间接引用
+            u_var="GH_USERNAME_$ID"
+            p_var="GH_PASSWORD_$ID"
+            s_var="GH_SESSION_$ID"
+            
+            export GH_USERNAME="${!u_var}"
+            export GH_PASSWORD="${!p_var}"
+            export GH_SESSION="${!s_var}"
+            export SESSION_SECRET_KEY="GH_SESSION_$ID"
+          fi
+
+          if [ -z "$GH_USERNAME" ]; then
+            echo "❌ 严重错误：无法读取到账号 $ID 的用户名，请检查 Secrets 配置！"
+            exit 1
+          fi
+
+          python scripts/auto_login.py
